@@ -1,0 +1,28 @@
+# Stage 1: Build the JAR with Maven & Java 21
+FROM maven:3.9.8-eclipse-temurin-21-alpine AS builder
+WORKDIR /app
+
+# 1. Cache Maven dependencies
+COPY pom.xml .
+RUN mvn dependency:go-offline -B
+
+# 2. Copy source and package the executable JAR
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+# Stage 2: Minimal Java 21 Runtime
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+
+# Create a non-root system user for security
+RUN addgroup -S spring && adduser -S spring -G spring
+USER spring:spring
+
+# Copy the built jar from Stage 1
+COPY --from=builder /app/target/*.jar app.jar
+
+# Spring Boot default port
+EXPOSE 8080
+
+# Run with container-aware JVM flags
+ENTRYPOINT ["java", "-XX:+UseContainerSupport", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]

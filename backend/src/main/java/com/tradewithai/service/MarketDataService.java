@@ -3,20 +3,31 @@ package com.tradewithai.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tradewithai.model.PriceBar;
+import com.tradewithai.model.PortfolioHolding;
+import com.tradewithai.model.OrderLog;
+import com.tradewithai.model.AccountBalance;
 import com.tradewithai.repository.PriceBarRepository;
+import com.tradewithai.repository.PortfolioHoldingRepository;
+import com.tradewithai.repository.OrderLogRepository;
+import com.tradewithai.repository.AccountBalanceRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 @Service
 public class MarketDataService {
 
     private final PriceBarRepository priceBarRepository;
+    private final PortfolioHoldingRepository portfolioHoldingRepository;
+    private final OrderLogRepository orderLogRepository;
+    private final AccountBalanceRepository accountBalanceRepository;
     private final ObjectMapper objectMapper;
     private final RestTemplate restTemplate;
 
@@ -32,9 +43,17 @@ public class MarketDataService {
         "SENSEX", "BSE_INDEX|SENSEX"
     );
 
-    public MarketDataService(PriceBarRepository priceBarRepository) {
+    public MarketDataService(PriceBarRepository priceBarRepository,
+                             PortfolioHoldingRepository portfolioHoldingRepository,
+                             OrderLogRepository orderLogRepository,
+                             AccountBalanceRepository accountBalanceRepository) {
         this.priceBarRepository = priceBarRepository;
+        this.portfolioHoldingRepository = portfolioHoldingRepository;
+        this.orderLogRepository = orderLogRepository;
+        this.accountBalanceRepository = accountBalanceRepository;
         this.objectMapper = new ObjectMapper();
+        this.objectMapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        this.objectMapper.disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         this.restTemplate = new RestTemplate();
     }
 
@@ -622,6 +641,87 @@ public class MarketDataService {
         }
     }
 
+    public Map<String, Object> lookupUpstox(String query) {
+        if (!isUpstoxConnected()) {
+            return null;
+        }
+        try {
+            String url = "https://api.upstox.com/v2/instruments/search?query=" + java.net.URLEncoder.encode(query, StandardCharsets.UTF_8);
+            
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Authorization", "Bearer " + upstoxAccessToken);
+            headers.set("Accept", "application/json");
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+            
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                JsonNode root = objectMapper.readTree(response.getBody());
+                JsonNode dataNode = root.path("data");
+                
+                if (dataNode.isArray() && !dataNode.isEmpty()) {
+                    JsonNode matchedNode = dataNode.get(0);
+                    String symbol = matchedNode.path("symbol").asText();
+                    String name = matchedNode.path("name").asText(symbol);
+                    String exchange = matchedNode.path("exchange").asText();
+                    String instrumentType = matchedNode.path("instrument_type").asText("STOCK");
+                    
+                    String ticker = symbol;
+                    if ("NSE".equalsIgnoreCase(exchange)) {
+                        ticker = symbol + ".NS";
+                    } else if ("BSE".equalsIgnoreCase(exchange)) {
+                        ticker = symbol + ".BO";
+                    }
+                    
+                    Map<String, Object> details = new HashMap<>();
+                    details.put("resolved", true);
+                    details.put("ticker", ticker);
+                    details.put("name", name);
+                    details.put("type", "INDEX".equalsIgnoreCase(instrumentType) ? "INDEX" : "STOCK");
+                    details.put("source", "upstox");
+                    return details;
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Upstox company search failed: " + e.getMessage());
+        }
+        return null;
+    }
+
+    public Map<String, Object> lookupYahooFinance(String query) {
+        try {
+            String url = "https://query2.finance.yahoo.com/v1/finance/search?q=" + java.net.URLEncoder.encode(query, StandardCharsets.UTF_8);
+            
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+            
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                JsonNode root = objectMapper.readTree(response.getBody());
+                JsonNode quotes = root.path("quotes");
+                
+                if (quotes.isArray() && !quotes.isEmpty()) {
+                    for (JsonNode quote : quotes) {
+                        String symbol = quote.path("symbol").asText();
+                        String name = quote.path("shortname").asText(quote.path("longname").asText(symbol));
+                        String type = quote.path("quoteType").asText("EQUITY");
+                        
+                        Map<String, Object> details = new HashMap<>();
+                        details.put("resolved", true);
+                        details.put("ticker", symbol);
+                        details.put("name", name);
+                        details.put("type", "INDEX".equalsIgnoreCase(type) ? "INDEX" : "STOCK");
+                        details.put("source", "yahoo");
+                        return details;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Yahoo Finance search failed: " + e.getMessage());
+        }
+        return null;
+    }
+
     private String resolveInstrumentKey(String ticker) {
         String upper = ticker.toUpperCase().trim();
         
@@ -797,14 +897,151 @@ public class MarketDataService {
         }
     }
 
-    public Map<String, Object> placeOrder(String ticker, String transactionType, int quantity, double price, String orderType, String product) {
+    @jakarta.annotation.PostConstruct
+    public void initAccountBalance() {
+        if (accountBalanceRepository.count() == 0) {
+            AccountBalance balance = new AccountBalance(500000.00, 500000.00, 500000.00);
+            accountBalanceRepository.save(balance);
+            System.out.println("Initialized account balance with ₹500,000.00");
+        }
+    }
+
+    public AccountBalance getAccountBalance() {
+        List<AccountBalance> list = accountBalanceRepository.findAll();
+        if (list.isEmpty()) {
+            AccountBalance balance = new AccountBalance(500000.00, 500000.00, 500000.00);
+            return accountBalanceRepository.save(balance);
+        }
+        return list.get(0);
+    }
+
+    public List<PortfolioHolding> getPortfolioHoldings() {
+        return portfolioHoldingRepository.findAll();
+    }
+
+    public List<OrderLog> getOrderHistory() {
+        return orderLogRepository.findAllByOrderByTimestampDesc();
+    }
+
+    public double calculateBlockedMargin() {
+        double blocked = 0.0;
+        for (PortfolioHolding h : portfolioHoldingRepository.findAll()) {
+            double cost = h.getQuantity() * h.getAvgPrice();
+            boolean isOption = h.getTicker().contains(" CE") || h.getTicker().contains(" PE") || "OPTION".equalsIgnoreCase(h.getName());
+            if ("INTRADAY".equalsIgnoreCase(h.getProduct()) && !isOption) {
+                blocked += cost / 5.0; // 5x leverage
+            } else {
+                blocked += cost; // 1x leverage
+            }
+        }
+        return blocked;
+    }
+
+    public double calculateUnrealizedPnl() {
+        double pnl = 0.0;
+        for (PortfolioHolding h : portfolioHoldingRepository.findAll()) {
+            double cost = h.getQuantity() * h.getAvgPrice();
+            double value = h.getQuantity() * h.getCurrentPrice();
+            if ("BUY".equalsIgnoreCase(h.getTransactionType())) {
+                pnl += (value - cost);
+            } else {
+                pnl += (cost - value);
+            }
+        }
+        return pnl;
+    }
+
+    @Transactional
+    public Map<String, Object> exitPosition(String ticker) {
+        Optional<PortfolioHolding> holdingOpt = portfolioHoldingRepository.findByTicker(ticker);
+        if (holdingOpt.isEmpty()) {
+            Map<String, Object> err = new HashMap<>();
+            err.put("status", "FAILED");
+            err.put("message", "No position found for " + ticker);
+            return err;
+        }
+        PortfolioHolding h = holdingOpt.get();
+        String counterTx = "BUY".equalsIgnoreCase(h.getTransactionType()) ? "SELL" : "BUY";
+        return placeOrder(h.getTicker(), counterTx, h.getQuantity(), h.getCurrentPrice(), "MARKET", h.getProduct());
+    }
+
+    private Map<String, Object> errorReceipt(String status, String message) {
         Map<String, Object> result = new HashMap<>();
-        String status = "SUCCESS";
+        result.put("status", status);
+        result.put("message", message);
+        result.put("timestamp", LocalDateTime.now().toString());
+        return result;
+    }
+
+    @Transactional
+    public Map<String, Object> placeOrder(String ticker, String transactionType, int quantity, double price, String orderType, String product) {
+        AccountBalance balance = getAccountBalance();
+        double currentLtp = price;
         String message = "Simulated Order executed successfully.";
-        String orderId = "ORD-" + java.util.UUID.randomUUID().toString().substring(0, 8).toUpperCase();
-        double executedPrice = price;
+        
+        // Resolve current price if 0.0 (MARKET order)
+        if (currentLtp <= 0.0) {
+            List<PriceBar> bars = priceBarRepository.findByTickerAndBarIntervalOrderByTimestampAsc(ticker, "1d");
+            if (!bars.isEmpty()) {
+                currentLtp = bars.get(bars.size() - 1).getClosePrice();
+            } else {
+                currentLtp = getInitialPriceForTicker(ticker);
+            }
+        }
+
+        boolean isOption = ticker.contains(" CE") || ticker.contains(" PE");
+        double orderCost = currentLtp * quantity;
+        double marginRequired = orderCost;
+        if ("INTRADAY".equalsIgnoreCase(product) && !isOption) {
+            marginRequired = orderCost / 5.0; // 5x leverage
+        }
+
+        // Check if this is an exit / reduction order
+        boolean isExit = false;
+        Optional<PortfolioHolding> existingOpt = portfolioHoldingRepository.findByTicker(ticker);
+        if (existingOpt.isPresent()) {
+            PortfolioHolding holding = existingOpt.get();
+            if (!holding.getTransactionType().equalsIgnoreCase(transactionType)) {
+                isExit = true;
+            }
+        }
+
+        // Enforce safety rules for non-exit entries
+        if (!isExit) {
+            // 1. Max Daily Loss Limit Check
+            double unrealizedPnl = calculateUnrealizedPnl();
+            double totalDailyPnl = balance.getRealizedTodayPnl() + unrealizedPnl;
+            if (totalDailyPnl <= -50000.0) {
+                return errorReceipt("FAILED", "Safety Violation: Maximum daily loss limit reached (-₹50,000). Entry blocked.");
+            }
+
+            // 2. Position Size Limit (Strictly less than 50% of available margin per trade)
+            double maxAllowedMargin = balance.getAvailableMargin() * 0.45;
+            if (marginRequired >= (balance.getAvailableMargin() * 0.50)) {
+                int originalQty = quantity;
+                double marginPerUnit = marginRequired / originalQty;
+                quantity = (int) (maxAllowedMargin / marginPerUnit);
+                if (quantity <= 0) {
+                    return errorReceipt("FAILED", "Safety Violation: Trade size exceeds 50% margin. Share price too high to fit even 1 unit.");
+                }
+                orderCost = currentLtp * quantity;
+                marginRequired = orderCost;
+                if ("INTRADAY".equalsIgnoreCase(product) && !isOption) {
+                    marginRequired = orderCost / 5.0;
+                }
+                message = String.format("Simulated Order size adjusted down from %d to %d to comply with 50%% margin safety limit.", originalQty, quantity);
+            }
+
+            // 3. Margin Availability Check
+            if (marginRequired > balance.getAvailableMargin()) {
+                return errorReceipt("FAILED", "Insufficient margin available for this trade. Required: ₹" + String.format("%.2f", marginRequired));
+            }
+        }
 
         // Try using Upstox API if connected
+        String orderId = "ORD-" + java.util.UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        String status = "SUCCESS";
+
         if (isUpstoxConnected()) {
             try {
                 String instrumentKey = resolveInstrumentKey(ticker);
@@ -840,43 +1077,114 @@ public class MarketDataService {
                         } else {
                             status = "FAILED";
                             message = root.path("errors").get(0).path("message").asText("Upstox rejected order.");
+                            return errorReceipt("FAILED", message);
                         }
                     } else {
                         status = "FAILED";
                         message = "Upstox API returned: " + response.getStatusCode();
+                        return errorReceipt("FAILED", message);
                     }
-                } else {
-                    message = "Simulated Order executed successfully (Could not resolve Upstox instrument key for " + ticker + ").";
                 }
             } catch (Exception e) {
                 System.err.println("Upstox Order Placement failed: " + e.getMessage());
-                message = "Simulated Order executed (Upstox API failed: " + e.getMessage() + ").";
             }
         }
 
-        // Prefill mock price if price is 0.0 (MARKET order)
-        if (executedPrice <= 0.0) {
-            // Get last close price as mock execution price
-            List<PriceBar> bars = priceBarRepository.findByTickerAndBarIntervalOrderByTimestampAsc(ticker, "1d");
-            if (!bars.isEmpty()) {
-                executedPrice = bars.get(bars.size() - 1).getClosePrice();
+        // Apply ledger changes & update portfolio in DB
+        if (isExit) {
+            PortfolioHolding holding = existingOpt.get();
+            double tradeCostOfPosition = quantity * holding.getAvgPrice();
+            double tradeValueOfPosition = quantity * currentLtp;
+            double tradePnl = 0.0;
+            
+            if ("BUY".equalsIgnoreCase(holding.getTransactionType())) {
+                tradePnl = tradeValueOfPosition - tradeCostOfPosition;
             } else {
-                executedPrice = 100.0; // default fallback
+                tradePnl = tradeCostOfPosition - tradeValueOfPosition;
             }
+
+            // Update balance realized P&L
+            balance.setRealizedTodayPnl(balance.getRealizedTodayPnl() + tradePnl);
+            balance.setTotalBalance(balance.getTotalBalance() + tradePnl);
+
+            // Recredit blocked margin
+            double holdingCost = holding.getQuantity() * holding.getAvgPrice();
+            double holdingMargin = holdingCost;
+            if ("INTRADAY".equalsIgnoreCase(holding.getProduct()) && !isOption) {
+                holdingMargin = holdingCost / 5.0;
+            }
+
+            double releasedFraction = (double) quantity / holding.getQuantity();
+            double releasedMargin = holdingMargin * releasedFraction;
+            balance.setAvailableMargin(balance.getAvailableMargin() + releasedMargin);
+
+            // Update quantity or remove holding
+            if (quantity >= holding.getQuantity()) {
+                portfolioHoldingRepository.delete(holding);
+            } else {
+                holding.setQuantity(holding.getQuantity() - quantity);
+                portfolioHoldingRepository.save(holding);
+            }
+        } else {
+            // New or additional position: Deduct margin
+            balance.setAvailableMargin(balance.getAvailableMargin() - marginRequired);
+            
+            PortfolioHolding newHolding = new PortfolioHolding(
+                ticker,
+                isOption ? ticker : ticker + " Eq",
+                quantity,
+                currentLtp,
+                currentLtp,
+                transactionType,
+                product,
+                currentLtp * (transactionType.equals("BUY") ? 1.05 : 0.95), // default target
+                currentLtp * (transactionType.equals("BUY") ? 0.97 : 1.03), // default SL
+                LocalDateTime.now()
+            );
+            portfolioHoldingRepository.save(newHolding);
         }
 
-        result.put("status", status);
-        result.put("message", message);
-        result.put("orderId", orderId);
-        result.put("ticker", ticker);
-        result.put("transactionType", transactionType);
-        result.put("quantity", quantity);
-        result.put("price", executedPrice);
-        result.put("orderType", orderType);
-        result.put("product", product);
-        result.put("totalCost", executedPrice * quantity);
-        result.put("timestamp", LocalDateTime.now().toString());
+        // Deduct 20 INR platform charge per trade execution
+        balance.setAvailableMargin(balance.getAvailableMargin() - 20.0);
+        balance.setTotalBalance(balance.getTotalBalance() - 20.0);
+        balance.setRealizedTodayPnl(balance.getRealizedTodayPnl() - 20.0);
 
-        return result;
+        accountBalanceRepository.save(balance);
+
+        // Save order logs
+        OrderLog orderLog = new OrderLog(
+            orderId,
+            ticker,
+            transactionType,
+            quantity,
+            currentLtp,
+            orderCost,
+            orderType,
+            product,
+            currentLtp * (transactionType.equals("BUY") ? 1.05 : 0.95),
+            currentLtp * (transactionType.equals("BUY") ? 0.97 : 1.03),
+            "EXECUTED",
+            LocalDateTime.now()
+        );
+        orderLogRepository.save(orderLog);
+
+        Map<String, Object> orderResult = new HashMap<>();
+        orderResult.put("status", status);
+        orderResult.put("message", message);
+        orderResult.put("orderId", orderId);
+        orderResult.put("ticker", ticker);
+        orderResult.put("transactionType", transactionType);
+        orderResult.put("quantity", quantity);
+        orderResult.put("price", currentLtp);
+        orderResult.put("orderType", orderType);
+        orderResult.put("product", product);
+        orderResult.put("totalCost", orderCost);
+        orderResult.put("timestamp", LocalDateTime.now().toString());
+
+        return orderResult;
+    }
+
+    public List<OrderLog> getOrderLogs() {
+        return orderLogRepository.findAllByOrderByTimestampDesc();
     }
 }

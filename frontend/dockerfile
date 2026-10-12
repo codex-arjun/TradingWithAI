@@ -1,0 +1,16 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy application files
+COPY . .
+
+# Expose Vite dev server port
+EXPOSE 3035
+
+# --host is required so the container can accept connections from outside
+CMD ["npm", "run", "dev", "--", "--host"]

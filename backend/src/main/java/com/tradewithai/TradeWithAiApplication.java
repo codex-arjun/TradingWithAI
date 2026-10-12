@@ -29,16 +29,16 @@ public class TradeWithAiApplication {
             symbolRepository.save(new Symbol("^NSEI", "NSE Nifty 50 Index", "INDEX"));
             symbolRepository.save(new Symbol("^BSESN", "BSE SENSEX Index", "INDEX"));
             symbolRepository.save(new Symbol("^NSEBANK", "NSE Bank Nifty Index", "INDEX"));
+            symbolRepository.save(new Symbol("^INDIAVIX", "India VIX Index", "INDEX"));
             symbolRepository.save(new Symbol("RELIANCE.NS", "Reliance Industries Ltd.", "STOCK"));
             symbolRepository.save(new Symbol("TCS.NS", "Tata Consultancy Services Ltd.", "STOCK"));
             symbolRepository.save(new Symbol("HDFCBANK.NS", "HDFC Bank Ltd.", "STOCK"));
             symbolRepository.save(new Symbol("INFY.NS", "Infosys Ltd.", "STOCK"));
             symbolRepository.save(new Symbol("SBIN.NS", "State Bank of India", "STOCK"));
             symbolRepository.save(new Symbol("ICICIBANK.NS", "ICICI Bank Ltd.", "STOCK"));
-            symbolRepository.save(new Symbol("TATAMOTORS.NS", "Tata Motors Ltd.", "STOCK"));
-            symbolRepository.save(new Symbol("BHARTIARTL.NS", "Bharti Airtel Ltd.", "STOCK"));
-            symbolRepository.save(new Symbol("LT.NS", "Larsen & Toubro Ltd.", "STOCK"));
-            symbolRepository.save(new Symbol("ITC.NS", "ITC Ltd.", "STOCK"));
+            symbolRepository.save(new Symbol("GC=F", "Gold Futures", "COMMODITY"));
+            symbolRepository.save(new Symbol("CL=F", "Crude Oil Futures", "COMMODITY"));
+            symbolRepository.save(new Symbol("SI=F", "Silver Futures", "COMMODITY"));
             System.out.println("Indian Watchlist seeded successfully.");
         };
     }

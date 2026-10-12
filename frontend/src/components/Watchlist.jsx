@@ -7,6 +7,17 @@ export default function Watchlist({ symbols, activeSymbol, onSelectSymbol, onAdd
   const [type, setType] = useState('STOCK');
   const [error, setError] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
+  const [activeWatchlistFilter, setActiveWatchlistFilter] = useState('ALL'); // ALL | STOCK_INDEX | COMMODITIES
+
+  const filteredSymbols = symbols.filter(sym => {
+    if (activeWatchlistFilter === 'STOCK_INDEX') {
+      return sym.type === 'STOCK' || sym.type === 'INDEX';
+    }
+    if (activeWatchlistFilter === 'COMMODITIES') {
+      return sym.type === 'COMMODITY';
+    }
+    return true; // ALL
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -62,12 +73,15 @@ export default function Watchlist({ symbols, activeSymbol, onSelectSymbol, onAdd
               className="input-field"
               style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '6px 10px', fontSize: '12px' }}
             />
-            <div style={{ display: 'flex', gap: '10px', fontSize: '11px' }}>
+            <div style={{ display: 'flex', gap: '10px', fontSize: '11px', flexWrap: 'wrap' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
                 <input type="radio" checked={type === 'STOCK'} onChange={() => setType('STOCK')} /> Stock
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                <input type="radio" checked={type === 'CRYPTO'} onChange={() => setType('CRYPTO')} /> Crypto
+                <input type="radio" checked={type === 'INDEX'} onChange={() => setType('INDEX')} /> Index
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                <input type="radio" checked={type === 'COMMODITY'} onChange={() => setType('COMMODITY')} /> Commodity
               </label>
             </div>
             {error && <div style={{ color: 'var(--color-down)', fontSize: '11px' }}>{error}</div>}
@@ -78,13 +92,65 @@ export default function Watchlist({ symbols, activeSymbol, onSelectSymbol, onAdd
         )}
       </div>
 
+      {/* Watchlist Category Filter Tabs */}
+      <div style={{ display: 'flex', gap: '8px', padding: '0 20px 10px 20px', borderBottom: '1px solid var(--border-color)', fontSize: '11px' }}>
+        <button 
+          onClick={() => setActiveWatchlistFilter('ALL')}
+          style={{
+            flex: 1,
+            padding: '6px 4px',
+            borderRadius: '4px',
+            border: '1px solid var(--border-color)',
+            backgroundColor: activeWatchlistFilter === 'ALL' ? 'var(--color-accent)' : 'transparent',
+            color: activeWatchlistFilter === 'ALL' ? '#fff' : 'var(--text-muted)',
+            fontWeight: activeWatchlistFilter === 'ALL' ? '700' : '500',
+            cursor: 'pointer',
+            fontSize: '10px'
+          }}
+        >
+          All
+        </button>
+        <button 
+          onClick={() => setActiveWatchlistFilter('STOCK_INDEX')}
+          style={{
+            flex: 1.5,
+            padding: '6px 4px',
+            borderRadius: '4px',
+            border: '1px solid var(--border-color)',
+            backgroundColor: activeWatchlistFilter === 'STOCK_INDEX' ? 'var(--color-accent)' : 'transparent',
+            color: activeWatchlistFilter === 'STOCK_INDEX' ? '#fff' : 'var(--text-muted)',
+            fontWeight: activeWatchlistFilter === 'STOCK_INDEX' ? '700' : '500',
+            cursor: 'pointer',
+            fontSize: '10px'
+          }}
+        >
+          Stocks/Indices
+        </button>
+        <button 
+          onClick={() => setActiveWatchlistFilter('COMMODITIES')}
+          style={{
+            flex: 1.2,
+            padding: '6px 4px',
+            borderRadius: '4px',
+            border: '1px solid var(--border-color)',
+            backgroundColor: activeWatchlistFilter === 'COMMODITIES' ? 'var(--color-accent)' : 'transparent',
+            color: activeWatchlistFilter === 'COMMODITIES' ? '#fff' : 'var(--text-muted)',
+            fontWeight: activeWatchlistFilter === 'COMMODITIES' ? '700' : '500',
+            cursor: 'pointer',
+            fontSize: '10px'
+          }}
+        >
+          Commodities
+        </button>
+      </div>
+
       <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
-        {symbols.length === 0 ? (
+        {filteredSymbols.length === 0 ? (
           <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '12px' }}>
-            No symbols in watchlist.
+            No matching symbols.
           </div>
         ) : (
-          symbols.map((sym) => {
+          filteredSymbols.map((sym) => {
             const isActive = activeSymbol && activeSymbol.ticker === sym.ticker;
             return (
               <div
